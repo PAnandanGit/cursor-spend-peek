@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""
+Cursor Token Tracer (cursor-token-tracer)
+A zero-token, local-only script to mine Cursor's internal SQLite state databases 
+and log files for exact token usage, session payloads, and transaction tracking.
+"""
+
+import os
+import sqlite3
+import json
+import glob
+from datetime import datetime
+
+# Paths to Cursor's local storage directories on macOS
+CURSOR_USER_DIR = os.path.expanduser("~/Library/Application Support/Cursor/User")
+GLOBAL_DB_PATH = os.path.join(CURSOR_USER_DIR, "globalStorage", "state.vscdb")
+WORKSPACE_STORAGE_DIR = os.path.join(CURSOR_USER_DIR, "workspaceStorage")
+LOGS_DIR = os.path.expanduser("~/Library/Logs/Cursor")
+
+def query_global_storage():
+    """Scans global storage for composer and token metadata."""
+    print("=" * 60)
+    print("SCANNING GLOBAL STORAGE DB")
+    print("=" * 60)
+    
+    if not os.path.exists(GLOBAL_DB_PATH):
+        print(f"Global DB not found at: {GLOBAL_DB_PATH}")
+        return
+
+    try:
+        conn = sqlite3.connect(GLOBAL_DB_PATH)
+        cursor = conn.cursor()
+        
+        # Search for keys related to composers, chat, or usage metrics
+        cursor.execute("""
+            SELECT key, value FROM cursorDiskKV 
+            WHERE key LIKE '%composer%' 
+               OR key LIKE '%chat%' 
+               OR key LIKE '%usage%' 
+               OR key LIKE '%token%'
+            LIMIT 15;
+        """)
+        results = cursor.fetchall()
+        
+        if not results:
+            print("No matching keys found in globalStorage state.vscdb.")
+            
+        for key, value in results:
+            print(f"\n[KEY]: {key}")
+            try:
+                parsed = json.loads(value)
+                print(json.dumps(parsed, indent=2)[:500]) # Truncate for readability
+                if len(json.dumps(parsed)) > 500:
+                    print("... [truncated]")
+            except Exception:
+                print(value[:300] if value else "[Empty value]")
+                
+        conn.close()
+    except Exception as e:
+        print(f"Error reading global DB: {e}")
+
+def scan_workspace_storages():
+    """Scans individual workspace storage databases for active project sessions."""
+    print("\n" + "=" * 60)
+    print("SCANNING WORKSPACE STORAGE DATABASES")
+    print("=" * 60)
+    
+    if not os.path.exists(WORKSPACE_STORAGE_DIR):
+        print(f"Workspace storage directory not found: {WORKSPACE_STORAGE_DIR}")
+        return
+
+    workspace_dbs = glob.glob(os.path.join(WORKSPACE_STORAGE_DIR, "*", "state.vscdb"))
+    print(f"Found {len(workspace_dbs)} workspace databases to inspect.")
+
+    for db_path in workspace_dbs:
+        workspace_id = os.path.basename(os.path.dirname(db_path))
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Check tables in workspace DB
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = [t[0] for t in cursor.fetchall()]
+            
+            target_table = "ItemTable" if "ItemTable" in tables else ("cursorDiskKV" if "cursorDiskKV" in tables else None)
+            
+            if target_table:
+                cursor.execute(f"SELECT key, value FROM {target_table} WHERE key LIKE '%composer%' OR key LIKE '%history%' LIMIT 5;")
+                rows = cursor.fetchall()
+                if rows:
+                    print(f"\n--- Workspace: {workspace_id[:8]}... (Table: {target_table}) ---")
+                    for key, val in rows:
+                        print(f"  Key: {key}")
+                        try:
+                            data = json.loads(val)
+                            # Look for token or cost metrics if present in state blobs
+                            if isinstance(data, dict):
+                                tokens = data.get("tokenCount") or data.get("tokens")
+                                if tokens:
+                                    print(f"    -> Token Count Found: {tokens}")
+                        except:
+                            pass
+            conn.close()
+        except Exception as e:
+            continue
+
+def inspect_local_logs():
+    """Parses local log files for network telemetry and transaction logs."""
+    print("\n" + "=" * 60)
+    print("INSPECTING LOCAL LOG FILES (Recent Activity)")
+    print("=" * 60)
+    
+    if not os.path.exists(LOGS_DIR):
+        print(f"Logs directory not found: {LOGS_DIR}")
+        return
+
+    # Find the most recent log subfolder
+    subdirs = [os.path.join(LOGS_DIR, d) for d in os.listdir(LOGS_DIR) if os.path.isdir(os.path.join(LOGS_DIR, d))]
+    if not subdirs:
+        print("No log subfolders found.")
+        return
+        
+    latest_subdir = max(subdirs, key=os.path.getmtime)
+    log_files = glob.glob(os.path.join(latest_subdir, "**", "*.log"), recursive=True)
+    
+    if not log_files:
+        print(f"No log files found in {latest_subdir}")
+        return
+        
+    # Pick the most recently modified log file (often main.log or renderer logs)
+    latest_log = max(log_files, key=os.path.getmtime)
+    print(f"Reading latest log: {os.path.basename(latest_log)}")
+    
+    match_count = 0
+    try:
+        with open(latest_log, "r", encoding="utf-8", errors="ignore") as f:
+            # Read last 1000 lines to catch recent requests
+            lines = f.readlines()
+            for line in lines[-1000:]:
+                if any(term in line.lower() for term in ["token", "cost", "completion", "usage", "spend", "v1/chat"]):
+                    print(f"  [LOG] {line.strip()[:120]}")
+                    match_count += 1
+                    if match_count >= 15:
+                        break
+        if match_count == 0:
+            print("  No explicit token/cost log entries matched in the trailing buffer.")
+    except Exception as e:
+        print(f"Error reading log file: {e}")
+
+if __name__ == "__main__":
+    print(f"Running Cursor Token Tracer at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    query_global_storage()
+    scan_workspace_storages()
+    inspect_local_logs()
+    print("\n" + "=" * 60)
+    print("Scan complete. Zero tokens spent.")
+    print("=" * 60)
