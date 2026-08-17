@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""
+Zero-token hook handler to parse and log transaction metrics 
+immediately as an agent response completes.
+"""
+
+import sys
+import json
+import os
+from datetime import datetime
+
+def main():
+    try:
+        # Read the hook payload from stdin sent by Cursor
+        raw_input = sys.stdin.read()
+        if not raw_input:
+            return
+            
+        data = json.loads(raw_input)
+        
+        # Extract potential token/usage keys passed in the agent lifecycle context
+        # (Structure mirrors inner payload fields from Cursor's agent loop)
+        usage_info = data.get("usage", {})
+        prompt_tokens = usage_info.get("promptTokens", data.get("promptTokens", "N/A"))
+        completion_tokens = usage_info.get("completionTokens", data.get("completionTokens", "N/A"))
+        model_used = data.get("model", "Unknown Model")
+        
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "model": model_used,
+            "promptTokens": prompt_tokens,
+            "completionTokens": completion_tokens,
+            "raw_payload_snippet": str(data)[:300] # Diagnostic glimpse
+        }
+        
+        # Append to a local ledger file in your home directory
+        ledger_path = os.path.expanduser("~/.cursor/local-spend-ledger.jsonl")
+        with open(ledger_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry) + "\n")
+            
+    except Exception as e:
+        # Fail silently so the editor loop is never blocked or disrupted
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
