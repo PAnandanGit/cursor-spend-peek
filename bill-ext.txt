@@ -1,198 +1,221 @@
 #!/bin/bash
-============================================================================
-CURSOR BILLING TOOL - EXTRACTOR
-============================================================================
-This script extracts all files from a properly formatted bundle file.
-Usage: ./extractor.sh [BUNDLE_FILE] [--output-dir DIR]
-./extractor.sh --help
-============================================================================
+# ============================================================================
+# CURSOR BILLING TOOL - EXTRACTOR
+# ============================================================================
+# This script extracts all files from a properly formatted bundle file.
+# Usage: ./extractor.sh [BUNDLE_FILE] [--output-dir DIR]
+#        ./extractor.sh --help
+# ============================================================================
 
 set -e
 
 VERSION="1.0.0"
-SCRIPT_NAME="0")"
+SCRIPT_NAME="$(basename "$0")"
 
 show_help() {
-cat << EOF
+    cat << EOF
 Cursor Billing Tool - Extractor
-Version: $`{VERSION}
+Version: ${VERSION}
 
 USAGE:
-`${SCRIPT_NAME} [BUNDLE_FILE] [OPTIONS]
+  ${SCRIPT_NAME} [BUNDLE_FILE] [OPTIONS]
 
 ARGUMENTS:
-BUNDLE_FILE Path to the bundle file to extract
+  BUNDLE_FILE               Path to the bundle file to extract
 
 OPTIONS:
---output-dir, -o DIR Extract files to specified directory (default: .)
---list, -l List all files contained in the bundle
---help, -h Show this help message
+  --output-dir, -o DIR      Extract files to specified directory (default: .)
+  --list, -l                List all files contained in the bundle
+  --help, -h                Show this help message
 
 EXAMPLES:
-List files in the bundle
-$`{SCRIPT_NAME} bundle.sh --list
-
-Extract to current directory
-`${SCRIPT_NAME} bundle.sh
-
-Extract to specific directory
-$`{SCRIPT_NAME} bundle.sh --output-dir ./my-project
+  # List files in the bundle
+  ${SCRIPT_NAME} bundle.sh --list
+  
+  # Extract to current directory
+  ${SCRIPT_NAME} bundle.sh
+  
+  # Extract to specific directory
+  ${SCRIPT_NAME} bundle.sh --output-dir ./my-project
 
 FILE MARKERS:
-The bundle file should contain markers like:
-============================================================================
-FILE: path/to/file
-============================================================================
+  The bundle file should contain markers like:
+  # ============================================================================
+  # FILE: path/to/file
+  # ============================================================================
 EOF
 }
 
 list_files() {
-local bundle_file="`$1"
-
-if [ ! -f "bundle_file"
-return 1
-fi
-
-echo "Files contained in the bundle:"
-echo ""
-
-grep -E "^# =+ FILE: .+" "$`bundle_file" | sed 's/^# =+ FILE: / /'
-
-echo ""
+    local bundle_file="$1"
+    
+    if [ ! -f "$bundle_file" ]; then
+        echo "Error: Bundle file not found: $bundle_file"
+        return 1
+    fi
+    
+    echo "Files contained in the bundle:"
+    echo ""
+    
+    grep -E "^# =+ FILE: .+" "$bundle_file" | sed 's/^# =+ FILE: /  /'
+    
+    echo ""
 }
 
 extract_files() {
-local bundle_file="$1" local output_dir="${2:-.}"
-
-if [ ! -f "$bundle_file" ]; then echo "Error: Bundle file not found: $bundle_file"
-return 1
-fi
-
-echo "Extracting files from: $bundle_file" echo "Output directory: $output_dir"
-echo ""
-
-# Create output directory
-mkdir -p "`$output_dir"
-
-# Parse the bundle file
-local in_file=0
-local current_file=""
-local file_content=""
-
-while IFS= read -r line || [ -n "latex
-line" ]; do # Check for file start marker if [[ "
-
-line" =~ ^#\ =+\ FILE:\ (.*)latex
- ]]; then # Save previous file if any if [ 
-
-in_file -eq 1 ] && [ -n "{output_dir}/(dirname "$`target_file")"
-
-# Create directory for file
-mkdir -p "`$target_dir"
-
-# Write file content
-printf "%s\n" "target_file"
-
-# Make executable if it's a script
-if [[ "current_file" == bin/* ]]; then
-chmod +x "$`target_file" 2>/dev/null || true
-fi
-
-echo " ✓ Extracted: `$current_file"
-
-file_content=""
-fi
-
-# Start new file
-current_file="$`{BASH_REMATCH[1]}"
-in_file=1
-file_content=""
-continue
-fi
-
-# If we're inside a file, collect content
-if [ $in_file -eq 1 ]; then # Skip lines that are markers or cat commands if [[ "$line" =~ ^cat\ <<\ 'EOF'\ >\ /dev/null$ ]] || \ [[ "$line" == "EOF" ]] || 
- [[ "$line" =~ ^#\ =+\$ ]] || 
- [[ "$line" == "#!/bin/bash" && -z "$file_content" ]]; then
-# Skip these lines in the content
-continue
-fi
-
-# If line starts with "FILE:" marker but isn't caught by regex, skip
-if [[ "`$line" =~ ^#\ FILE: ]]; then
-continue
-fi
-
-# Add line to file content
-if [ -n "{file_content}"latex
-'\n'"
-
-{line}"
-else
-file_content="bundle_file"
-
-# Save the last file
-if [ current_file" ] && [ -n "{output_dir}/(dirname "$`target_file")"
-
-mkdir -p "$target_dir" printf "%s\n" "$file_content" > "`$target_file"
-
-if [[ "current_file" == bin/* ]]; then
-chmod +x "$`target_file" 2>/dev/null || true
-fi
-
-echo " ✓ Extracted: `$current_file"
-fi
-
-echo ""
-echo "Extraction complete!"
-echo ""
-echo "Files extracted to: $`output_dir"
-
-# Show extracted files
-echo ""
-echo "Extracted files:"
-find "$output_dir" -type f ! -path "*/.git/*" | sed "s|^$output_dir/| |" | sort
+    local bundle_file="$1"
+    local output_dir="${2:-.}"
+    
+    if [ ! -f "$bundle_file" ]; then
+        echo "Error: Bundle file not found: $bundle_file"
+        return 1
+    fi
+    
+    echo "Extracting files from: $bundle_file"
+    echo "Output directory: $output_dir"
+    echo ""
+    
+    # Create output directory
+    mkdir -p "$output_dir"
+    
+    # Parse the bundle file
+    local in_file=0
+    local current_file=""
+    local file_content=""
+    
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Check for file start marker
+        if [[ "$line" =~ ^#\ =+\ FILE:\ (.*)$ ]]; then
+            # Save previous file if any
+            if [ $in_file -eq 1 ] && [ -n "$current_file" ]; then
+                local target_file="${output_dir}/${current_file}"
+                local target_dir="$(dirname "$target_file")"
+                
+                # Create directory for file
+                mkdir -p "$target_dir"
+                
+                # Write file content
+                printf "%s\n" "$file_content" > "$target_file"
+                
+                # Make executable if it's a script
+                if [[ "$current_file" == *.sh ]] || [[ "$current_file" == bin/* ]]; then
+                    chmod +x "$target_file" 2>/dev/null || true
+                fi
+                
+                echo "  ✓ Extracted: $current_file"
+                
+                file_content=""
+            fi
+            
+            # Start new file
+            current_file="${BASH_REMATCH[1]}"
+            in_file=1
+            file_content=""
+            continue
+        fi
+        
+        # If we're inside a file, collect content
+        if [ $in_file -eq 1 ]; then
+            # Skip lines that are markers or cat commands
+            if [[ "$line" =~ ^cat\ <<\ \'EOF\'\ >\ /dev/null$ ]] || \
+               [[ "$line" == "EOF" ]] || \
+               [[ "$line" =~ ^#\ =+\$ ]] || \
+               [[ "$line" == "#!/bin/bash" && -z "$file_content" ]]; then
+                # Skip these lines in the content
+                continue
+            fi
+            
+            # If line starts with "FILE:" marker but isn't caught by regex, skip
+            if [[ "$line" =~ ^#\ FILE: ]]; then
+                continue
+            fi
+            
+            # Add line to file content
+            if [ -n "$file_content" ]; then
+                file_content="${file_content}"$'\n'"${line}"
+            else
+                file_content="${line}"
+            fi
+        fi
+    done < "$bundle_file"
+    
+    # Save the last file
+    if [ $in_file -eq 1 ] && [ -n "$current_file" ] && [ -n "$file_content" ]; then
+        local target_file="${output_dir}/${current_file}"
+        local target_dir="$(dirname "$target_file")"
+        
+        mkdir -p "$target_dir"
+        printf "%s\n" "$file_content" > "$target_file"
+        
+        if [[ "$current_file" == *.sh ]] || [[ "$current_file" == bin/* ]]; then
+            chmod +x "$target_file" 2>/dev/null || true
+        fi
+        
+        echo "  ✓ Extracted: $current_file"
+    fi
+    
+    echo ""
+    echo "Extraction complete!"
+    echo ""
+    echo "Files extracted to: $output_dir"
+    
+    # Show extracted files
+    echo ""
+    echo "Extracted files:"
+    find "$output_dir" -type f ! -path "*/.git/*" | sed "s|^$output_dir/|  |" | sort
 }
 
-Main execution
-if [ $# -eq 0 ]; then echo "Error: No bundle file specified" echo "Try '${SCRIPT_NAME} --help' for usage."
-exit 1
+# Main execution
+if [ $# -eq 0 ]; then
+    echo "Error: No bundle file specified"
+    echo "Try '${SCRIPT_NAME} --help' for usage."
+    exit 1
 fi
 
 BUNDLE_FILE=""
 OUTPUT_DIR="."
 LIST_ONLY=0
 
-Parse arguments
-while [ $# -gt 0 ]; do case "$1" in
---help|-h)
-show_help
-exit 0
-;;
---list|-l)
-LIST_ONLY=1
-shift
-;;
---output-dir|-o)
-if [ -z "$2" ]; then echo "Error: --output-dir requires an argument" exit 1 fi OUTPUT_DIR="$2"
-shift 2
-;;
-*)
-if [ -z "$BUNDLE_FILE" ]; then BUNDLE_FILE="$1"
-shift
-else
-echo "Error: Unknown option: $1" echo "Try '${SCRIPT_NAME} --help' for usage."
-exit 1
-fi
-;;
-esac
+# Parse arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        --list|-l)
+            LIST_ONLY=1
+            shift
+            ;;
+        --output-dir|-o)
+            if [ -z "$2" ]; then
+                echo "Error: --output-dir requires an argument"
+                exit 1
+            fi
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        *)
+            if [ -z "$BUNDLE_FILE" ]; then
+                BUNDLE_FILE="$1"
+                shift
+            else
+                echo "Error: Unknown option: $1"
+                echo "Try '${SCRIPT_NAME} --help' for usage."
+                exit 1
+            fi
+            ;;
+    esac
 done
 
-if [ -z "$BUNDLE_FILE" ]; then echo "Error: No bundle file specified" echo "Try '${SCRIPT_NAME} --help' for usage."
-exit 1
+if [ -z "$BUNDLE_FILE" ]; then
+    echo "Error: No bundle file specified"
+    echo "Try '${SCRIPT_NAME} --help' for usage."
+    exit 1
 fi
 
-if [ $LIST_ONLY -eq 1 ]; then list_files "$BUNDLE_FILE"
+if [ $LIST_ONLY -eq 1 ]; then
+    list_files "$BUNDLE_FILE"
 else
-extract_files "`$BUNDLE_FILE" "$OUTPUT_DIR"
+    extract_files "$BUNDLE_FILE" "$OUTPUT_DIR"
 fi
