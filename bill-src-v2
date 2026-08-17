@@ -1,0 +1,406 @@
+#!/bin/bash
+# CURSOR BILLING TOOL - SELF-EXTRACTING BUNDLE
+set -e
+mkdir -p bin lib examples
+
+cat > bin/cursor-billing << 'EOF'
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "${SCRIPT_DIR}")"
+LIB_DIR="${BASE_DIR}/lib"
+DATA_DIR="${BASE_DIR}/data"
+CONFIG_DIR="${HOME}/.config/cursor-billing"
+LOG_DIR="${BASE_DIR}/logs"
+source "${LIB_DIR}/core.sh"
+source "${LIB_DIR}/display.sh"
+source "${LIB_DIR}/security.sh"
+mkdir -p "${DATA_DIR}" 2>/dev/null
+mkdir -p "${LOG_DIR}" 2>/dev/null
+mkdir -p "${CONFIG_DIR}" 2>/dev/null
+case "$1" in
+    display|--display|-d) display_billing ;;
+    update|--update|-u) update_billing ;;
+    status|--status|-s) check_security ;;
+    usage|--usage) show_usage ;;
+    config|--config) show_config ;;
+    help|--help|-h) show_help ;;
+    *) echo "Usage: cursor-billing [command]"; echo "Try 'cursor-billing help'"; exit 1 ;;
+esac
+EOF
+chmod +x bin/cursor-billing
+
+cat > lib/core.sh << 'EOF'
+#!/bin/bash
+VERSION="1.0.0"
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DATA_DIR="${BASE_DIR}/data"
+CONFIG_DIR="${HOME}/.config/cursor-billing"
+LOG_DIR="${BASE_DIR}/logs"
+BILLING_FILE="${DATA_DIR}/billing-data.json"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+LOG_FILE="${LOG_DIR}/billing.log"
+init_environment() {
+    mkdir -p "${DATA_DIR}" 2>/dev/null
+    mkdir -p "${CONFIG_DIR}" 2>/dev/null
+    mkdir -p "${LOG_DIR}" 2>/dev/null
+    if [ ! -f "${CONFIG_FILE}" ]; then
+        create_default_config
+    fi
+}
+create_default_config() {
+    cat > "${CONFIG_FILE}" << 'EOC'
+{
+  "version": "1.0.0",
+  "created": "$(date -Iseconds)",
+  "settings": {
+    "refresh_interval": 3600,
+    "cache_duration": 86400,
+    "log_level": "info",
+    "security": {
+      "encrypt_data": false,
+      "require_manual_update": true
+    }
+  }
+}
+EOC
+}
+log_operation() {
+    local message="$1"
+    local level="${2:-info}"
+    local timestamp="$(date -Iseconds 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "[${timestamp}] [${level}] ${message}" >> "${LOG_FILE}"
+}
+get_billing_data() {
+    if [ -f "${BILLING_FILE}" ]; then
+        cat "${BILLING_FILE}" 2>/dev/null || echo "null"
+    else
+        echo "null"
+    fi
+}
+save_billing_data() {
+    local data="$1"
+    echo "${data}" > "${BILLING_FILE}"
+    chmod 600 "${BILLING_FILE}" 2>/dev/null
+    log_operation "Billing data updated"
+}
+validate_json() {
+    local data="$1"
+    if echo "${data}" | grep -q "plan" && \
+       echo "${data}" | grep -q "amount" && \
+       echo "${data}" | grep -q "status"; then
+        return 0
+    else
+        return 1
+    fi
+}
+get_timestamp() {
+    date -Iseconds 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
+}
+EOF
+
+cat > lib/display.sh << 'EOF'
+#!/bin/bash
+display_billing() {
+    local data=$(get_billing_data)
+    if [ "${data}" = "null" ] || [ -z "${data}" ]; then
+        echo ""; echo "No billing data available."
+        echo "Run 'cursor-billing update' to enter your billing information."
+        echo ""; return 1
+    fi
+    local plan=$(echo "${data}" | grep -o '"plan":"[^"]*"' | cut -d'"' -f4 2>/dev/null)
+    local period=$(echo "${data}" | grep -o '"billing_period":"[^"]*"' | cut -d'"' -f4 2>/dev/null)
+    local next_date=$(echo "${data}" | grep -o '"next_billing_date":"[^"]*"' | cut -d'"' -f4 2>/dev/null)
+    local amount=$(echo "${data}" | grep -o '"amount":[0-9.]*' | cut -d':' -f2 2>/dev/null)
+    local currency=$(echo "${data}" | grep -o '"currency":"[^"]*"' | cut -d'"' -f4 2>/dev/null)
+    local status=$(echo "${data}" | grep -o '"status":"[^"]*"' | cut -d'"' -f4 2>/dev/null)
+    local requests_used=$(echo "${data}" | grep -o '"requests_used":[0-9]*' | cut -d':' -f2 2>/dev/null)
+    local requests_limit=$(echo "${data}" | grep -o '"requests_limit":[0-9]*' | cut -d':' -f2 2>/dev/null)
+    local tokens_used=$(echo "${data}" | grep -o '"tokens_used":[0-9]*' | cut -d':' -f2 2>/dev/null)
+    local tokens_limit=$(echo "${data}" | grep -o '"tokens_limit":[0-9]*' | cut -d':' -f2 2>/dev/null)
+    local cached_at=$(echo "${data}" | grep -o '"cached_at":"[^"]*"' | cut -d'"' -f4 2>/dev/null)
+EOF
+
+cat >> lib/display.sh << 'EOF'
+    plan=${plan:-N/A}; period=${period:-N/A}; next_date=${next_date:-N/A}
+    amount=${amount:-0.00}; currency=${currency:-USD}; status=${status:-N/A}
+    requests_used=${requests_used:-0}; requests_limit=${requests_limit:-0}
+    tokens_used=${tokens_used:-0}; tokens_limit=${tokens_limit:-0}
+    cached_at=${cached_at:-Never}
+    echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Cursor AI Billing Information"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Plan:              ${plan}"
+    echo "  Billing Period:    ${period}"
+    echo "  Next Billing:      ${next_date}"
+    echo "  Amount:            ${currency}${amount}"
+    echo "  Status:            ${status}"
+    echo "──────────────────────────────────────────────────────────────"
+    echo "  Usage Statistics"
+    echo "    Requests Used:   ${requests_used}"
+    echo "    Requests Limit:  ${requests_limit}"
+    echo "    Tokens Used:     ${tokens_used}"
+    echo "    Tokens Limit:    ${tokens_limit}"
+EOF
+
+cat >> lib/display.sh << 'EOF'
+    if [ "${requests_limit}" -gt 0 ] 2>/dev/null; then
+        local pct=$(echo "scale=1; ${requests_used} * 100 / ${requests_limit}" | bc 2>/dev/null || echo "0")
+        echo "    Usage:           ${pct}%"
+    fi
+    echo "──────────────────────────────────────────────────────────────"
+    echo "  Last Updated:      ${cached_at}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+show_usage() {
+    echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Usage Statistics"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if [ -f "${LOG_FILE}" ]; then
+        local total_ops=$(wc -l < "${LOG_FILE}" 2>/dev/null || echo "0")
+        local last_update=$(tail -1 "${LOG_FILE}" 2>/dev/null | cut -d' ' -f1-2 || echo "Never")
+        echo "  Total Operations:  ${total_ops}"
+        echo "  Last Activity:     ${last_update}"
+    else
+        echo "  No usage data available"
+    fi
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+EOF
+
+cat >> lib/display.sh << 'EOF'
+show_help() {
+    cat << 'EOH'
+Cursor Billing Tool - Version 1.0.0
+USAGE: cursor-billing [COMMAND] [OPTIONS]
+COMMANDS: display, -d, --display | update, -u, --update | status, -s, --status
+  usage, --usage | config, --config | help, -h, --help
+FILES: Data: ~/.local/share/cursor-billing/data/ | Config: ~/.config/cursor-billing/
+EOH
+}
+EOF
+
+cat > lib/security.sh << 'EOF'
+#!/bin/bash
+check_security() {
+    echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Security Status"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    local dirs=("${DATA_DIR}" "${CONFIG_DIR}" "${LOG_DIR}")
+    for dir in "${dirs[@]}"; do
+        if [ -d "${dir}" ]; then
+            local perms=$(stat -c "%a" "${dir}" 2>/dev/null || stat -f "%Lp" "${dir}" 2>/dev/null)
+            if [ "${perms}" = "700" ] || [ "${perms}" = "755" ]; then
+                echo "  ✓ ${dir}: ${perms} (secure)"
+            else
+                echo "  ⚠ ${dir}: ${perms} (recommend: 700)"
+            fi
+        fi
+    done
+EOF
+
+cat >> lib/security.sh << 'EOF'
+    if [ -f "${BILLING_FILE}" ]; then
+        local perms=$(stat -c "%a" "${BILLING_FILE}" 2>/dev/null || stat -f "%Lp" "${BILLING_FILE}" 2>/dev/null)
+        if [ "${perms}" = "600" ]; then
+            echo "  ✓ ${BILLING_FILE}: ${perms} (secure)"
+        else
+            echo "  ⚠ ${BILLING_FILE}: ${perms} (recommend: 600)"
+        fi
+    fi
+    if [ -f "${BILLING_FILE}" ]; then
+        if grep -q "password\|secret\|token\|key" "${BILLING_FILE}" 2>/dev/null; then
+            echo "  ⚠ WARNING: Sensitive keywords detected"
+        else
+            echo "  ✓ No sensitive keywords detected"
+        fi
+    fi
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+EOF
+
+cat >> lib/security.sh << 'EOF'
+    plan=${plan:-Pro}; period=${period:-Monthly}
+    next_date=${next_date:-$(date -d '+1 month' +%Y-%m-%d 2>/dev/null || date -v+1m +%Y-%m-%d 2>/dev/null || echo "N/A")}
+    amount=${amount:-20.00}; status=${status:-active}
+    requests_used=${requests_used:-0}; requests_limit=${requests_limit:-5000}
+    tokens_used=${tokens_used:-0}; tokens_limit=${tokens_limit:-5000000}
+    local json_data="{
+  \"plan\": \"${plan}\", \"billing_period\": \"${period}\",
+  \"next_billing_date\": \"${next_date}\", \"amount\": ${amount},
+  \"currency\": \"USD\", \"status\": \"${status}\",
+  \"usage\": { \"requests_used\": ${requests_used}, \"requests_limit\": ${requests_limit},
+    \"tokens_used\": ${tokens_used}, \"tokens_limit\": ${tokens_limit} },
+  \"payment_method\": \"•••• 4242\", \"cached_at\": \"$(get_timestamp)\",
+  \"source\": \"manual_update\"
+}"
+EOF
+
+cat >> lib/security.sh << 'EOF'
+    if validate_json "${json_data}"; then
+        save_billing_data "${json_data}"
+        echo ""; echo "✓ Billing data updated successfully"
+        log_operation "Manual billing update completed"
+    else
+        echo ""; echo "✗ Error: Invalid data format"; return 1
+    fi
+    echo ""
+}
+show_config() {
+    if [ -f "${CONFIG_FILE}" ]; then
+        echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Configuration"; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        cat "${CONFIG_FILE}" | sed 's/^/  /'
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; echo ""
+    else
+        echo "No configuration file found"
+    fi
+}
+EOF
+
+cat > bin/cursor-billing.ps1 << 'EOF'
+param([Parameter(Position=0)][ValidateSet('display','update','status','usage','help')][string]$Command='display')
+$BILLING_DIR="$env:USERPROFILE\.cursor-billing"; $CONFIG_DIR="$env:USERPROFILE\.config\cursor-billing"
+$LOG_DIR="$env:USERPROFILE\.cursor-billing\logs"; $BILLING_FILE="$BILLING_DIR\billing-data.json"
+$CONFIG_FILE="$CONFIG_DIR\config.json"; $LOG_FILE="$LOG_DIR\billing.log"
+New-Item -ItemType Directory -Force -Path $BILLING_DIR|Out-Null
+New-Item -ItemType Directory -Force -Path $CONFIG_DIR|Out-Null
+New-Item -ItemType Directory -Force -Path $LOG_DIR|Out-Null
+function Write-Log{param([string]$Message,[string]$Level="info");$timestamp=(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ");"[${timestamp}] [${Level}] ${Message}"|Out-File -Append -FilePath $LOG_FILE}
+function Get-BillingData{if(Test-Path $BILLING_FILE){Get-Content $BILLING_FILE -Raw|ConvertFrom-Json}else{$null}}
+function Save-BillingData{param($Data);$Data|ConvertTo-Json -Depth 10|Set-Content $BILLING_FILE -Encoding UTF8;Write-Log "Billing data updated"}
+function Display-Billing{$data=Get-BillingData;if(-not $data){Write-Host "";Write-Host "No billing data available. Run with 'update' first." -ForegroundColor Red;Write-Host "";return}
+Write-Host "";Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "  Cursor AI Billing Information" -ForegroundColor Cyan
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "  Plan:              $($data.plan)" -ForegroundColor White
+Write-Host "  Billing Period:    $($data.billing_period)" -ForegroundColor White
+Write-Host "  Next Billing:      $($data.next_billing_date)" -ForegroundColor White
+Write-Host "  Amount:            $($data.currency)$($data.amount)" -ForegroundColor White
+Write-Host "  Status:            $($data.status)" -ForegroundColor White
+Write-Host "──────────────────────────────────────────────────────────────" -ForegroundColor Gray
+Write-Host "  Usage Statistics" -ForegroundColor Yellow
+Write-Host "    Requests Used:   $($data.usage.requests_used)" -ForegroundColor White
+Write-Host "    Requests Limit:  $($data.usage.requests_limit)" -ForegroundColor White
+Write-Host "    Tokens Used:     $($data.usage.tokens_used)" -ForegroundColor White
+Write-Host "    Tokens Limit:    $($data.usage.tokens_limit)" -ForegroundColor White
+Write-Host "──────────────────────────────────────────────────────────────" -ForegroundColor Gray
+Write-Host "  Last Updated:      $($data.cached_at)" -ForegroundColor White
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan;Write-Host ""}
+EOF
+
+cat >> bin/cursor-billing.ps1 << 'EOF'
+function Update-Billing{Write-Host "";Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan;Write-Host "  Update Billing Data" -ForegroundColor Cyan;Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan;Write-Host ""
+$plan=Read-Host "Plan (Pro/Free/Team) [Pro]";$period=Read-Host "Billing Period (Monthly/Annual) [Monthly]"
+$next_date=Read-Host "Next Billing Date (YYYY-MM-DD) [$((Get-Date).AddMonths(1).ToString('yyyy-MM-dd'))]"
+$amount=Read-Host "Amount (USD) [20.00]";$status=Read-Host "Status (active/inactive) [active]"
+$requests_used=Read-Host "Requests Used [0]";$requests_limit=Read-Host "Requests Limit [5000]"
+$tokens_used=Read-Host "Tokens Used [0]";$tokens_limit=Read-Host "Tokens Limit [5000000]"
+$data=@{plan=if($plan){$plan}else{"Pro"};billing_period=if($period){$period}else{"Monthly"}
+next_billing_date=if($next_date){$next_date}else{(Get-Date).AddMonths(1).ToString("yyyy-MM-dd")}
+amount=if($amount){[double]$amount}else{20.00};currency="USD";status=if($status){$status}else{"active"}
+usage=@{requests_used=if($requests_used){[int]$requests_used}else{0}
+requests_limit=if($requests_limit){[int]$requests_limit}else{5000}
+tokens_used=if($tokens_used){[int]$tokens_used}else{0}
+tokens_limit=if($tokens_limit){[int]$tokens_limit}else{5000000}}
+payment_method="•••• 4242";cached_at=(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ");source="manual_update"}
+Save-BillingData $data;Write-Host "";Write-Host "✓ Billing data updated successfully" -ForegroundColor Green;Write-Host ""}
+EOF
+
+cat >> bin/cursor-billing.ps1 << 'EOF'
+function Check-Security{Write-Host "";Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan;Write-Host "  Security Status" -ForegroundColor Cyan;Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+$dirs=@($BILLING_DIR,$CONFIG_DIR,$LOG_DIR);foreach($dir in $dirs){if(Test-Path $dir){Write-Host "  ✓ $dir" -ForegroundColor Green}}
+if(Test-Path $BILLING_FILE){Write-Host "  ✓ Billing data file exists" -ForegroundColor Green
+$content=Get-Content $BILLING_FILE -Raw;if($content -match "password|secret|token|key"){Write-Host "  ⚠ WARNING: Sensitive keywords detected" -ForegroundColor Yellow}else{Write-Host "  ✓ No sensitive keywords detected" -ForegroundColor Green}}
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan;Write-Host ""}
+function Show-Help{Write-Host @"Cursor Billing Tool - Version 1.0.0 (Windows)
+USAGE: .\cursor-billing.ps1 [COMMAND]
+COMMANDS: display | update | status | usage | help
+FILES: Data: $BILLING_DIR | Config: $CONFIG_DIR | Logs: $LOG_DIR
+"@}
+switch($Command){'display'{Display-Billing}'update'{Update-Billing}'status'{Check-Security}'usage'{Show-Usage}'help'{Show-Help}default{Write-Host "Unknown command. Use 'help' for usage." -ForegroundColor Red}}
+EOF
+
+cat > README.md << 'EOF'
+# Cursor Billing Tool
+Enterprise-grade billing information display for Cursor AI IDE.
+## Features
+- Display billing information offline
+- Manual data entry (no network required)
+- Security-focused design
+- Cross-platform support
+- No external dependencies
+- Audit logging
+## Installation
+### Linux/macOS: ./install.sh
+### Windows: .\cursor-billing.ps1 update
+## Usage
+cursor-billing display | update | status | help
+## Security - All data stored locally, no network connections
+## Uninstall - rm -rf ~/.local/share/cursor-billing ~/.config/cursor-billing
+EOF
+
+cat > install.sh << 'EOF'
+#!/bin/bash
+set -e
+INSTALL_DIR="${HOME}/.local/share/cursor-billing"
+BIN_DIR="${HOME}/.local/bin"
+CONFIG_DIR="${HOME}/.config/cursor-billing"
+echo "Installing Cursor Billing Tool..."
+mkdir -p "${INSTALL_DIR}/bin" "${INSTALL_DIR}/lib" "${INSTALL_DIR}/data" "${INSTALL_DIR}/logs" "${CONFIG_DIR}" "${BIN_DIR}"
+cp -r bin/* "${INSTALL_DIR}/bin/"
+cp -r lib/* "${INSTALL_DIR}/lib/"
+chmod 755 "${INSTALL_DIR}/bin/"*
+chmod 600 "${INSTALL_DIR}/data" 2>/dev/null || true
+chmod 700 "${INSTALL_DIR}/logs" 2>/dev/null || true
+ln -sf "${INSTALL_DIR}/bin/cursor-billing" "${BIN_DIR}/cursor-billing"
+if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then
+    echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "${HOME}/.bashrc"
+    echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "${HOME}/.zshrc" 2>/dev/null || true
+fi
+echo ""; echo "Installation complete!"
+echo "Quick Start: cursor-billing update | cursor-billing display | cursor-billing status"
+EOF
+chmod +x install.sh
+
+cat > VERSION << 'EOF'
+1.0.0
+EOF
+
+mkdir -p examples
+cat > examples/example-data.json << 'EOF'
+{"plan":"Pro","billing_period":"Monthly","next_billing_date":"2026-09-15","amount":20.00,"currency":"USD","status":"active","usage":{"requests_used":1250,"requests_limit":5000,"tokens_used":1500000,"tokens_limit":5000000},"payment_method":"•••• 4242","cached_at":"2026-08-17T10:30:00Z","source":"example"}
+EOF
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Files created successfully!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Files created:"
+ls -la bin/ lib/ examples/ 2>/dev/null
+echo ""
+echo "To install: ./install.sh"
+echo "To test: ./bin/cursor-billing --help"
+
+
+
+cat >> lib/security.sh << 'EOF'
+update_billing() {
+    echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Update Billing Data"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""; echo "Enter billing information (press Enter to keep default):"; echo ""
+    read -p "Plan (Pro/Free/Team) [Pro]: " plan
+    read -p "Billing Period (Monthly/Annual) [Monthly]: " period
+    read -p "Next Billing Date (YYYY-MM-DD) [$(date -d '+1 month' +%Y-%m-%d 2>/dev/null || date -v+1m +%Y-%m-%d 2>/dev/null)]: " next_date
+    read -p "Amount (USD) [20.00]: " amount
+    read -p "Status (active/inactive) [active]: " status
+    read -p "Requests Used [0]: " requests_used
+    read -p "Requests Limit [5000]: " requests_limit
+    read -p "Tokens Used [0]: " tokens_used
+    read -p "Tokens Limit [5000000]: " tokens_limit
+EOF
+
