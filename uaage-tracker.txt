@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+import sys
+import json
+import urllib.request
+import os
+from datetime import datetime
+
+# Grab your WorkosCursorSessionToken from the browser's developer tools 
+# while logged into the Cursor Dashboard.
+SESSION_TOKEN = os.environ.get("CURSOR_SESSION_TOKEN", "YOUR_SSO_SESSION_TOKEN")
+DASHBOARD_URL = "https://www.cursor.com/api/dashboard/usage"
+
+# Define the path for the local ledger file. 
+# We'll put it in a dedicated directory within your user folder.
+LEDGER_DIR = os.path.expanduser("~/pc-agent-lab/cursor-logs")
+LEDGER_FILE = os.path.join(LEDGER_DIR, "usage_ledger.txt")
+
+def ensure_ledger_directory():
+    """Ensure the directory for the ledger file exists."""
+    if not os.path.exists(LEDGER_DIR):
+        os.makedirs(LEDGER_DIR, exist_ok=True)
+
+def fetch_and_record_usage():
+    headers = {
+        "Content-Type": "application/json",
+        "Cookie": f"WorkosCursorSessionToken={SESSION_TOKEN}"
+    }
+    
+    req = urllib.request.Request(DASHBOARD_URL, headers=headers)
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode())
+                
+                # Map keys based on the current dashboard API schema
+                monthly_spend = data.get("monthlySpend", 0)
+                remaining_cap = data.get("remainingCap", 0)
+                daily_usage = data.get("dailyUsage", 0)
+                last_interaction_cost = data.get("lastInteractionCost", 0.0)
+
+                # Format the log entry
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                log_entry = (
+                    f"[{timestamp}]\n"
+                    f"Monthly Spend:            ${monthly_spend:.2f}\n"
+                    f"Remaining Cap:            ${remaining_cap:.2f}\n"
+                    f"Daily Usage:              {daily_usage} requests\n"
+                    f"Current Interaction Cost: ${last_interaction_cost:.4f}\n"
+                    f"---------------------------\n"
+                )
+
+                # Append to the ledger file
+                ensure_ledger_directory()
+                with open(LEDGER_FILE, "a") as f:
+                    f.write(log_entry)
+                
+    except Exception as e:
+        # If there's a network error, log that to the file as well
+        ensure_ledger_directory()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(LEDGER_FILE, "a") as f:
+            f.write(f"[{timestamp}] Error fetching usage: {e}\n---------------------------\n")
+
+if __name__ == "__main__":
+    # 1. Read the agent context passed by Cursor via stdin (required by the hooks architecture)
+    try:
+        input_data = sys.stdin.read()
+    except Exception:
+        pass
+
+    # 2. Fire the network request and update the ledger
+    fetch_and_record_usage()
+    
+    # 3. Exit with 0 and an empty JSON object to signal success to the Cursor loop
+    print(json.dumps({}))
+    sys.exit(0)
